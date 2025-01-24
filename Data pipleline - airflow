@@ -1,0 +1,77 @@
+from airflow import DAG
+from airflow.operators.python_operator import PythonOperator
+from datetime import datetime
+import pandas as pd
+import joblib
+from sklearn.linear_model import LinearRegression
+from fastapi import FastAPI
+
+# Define the Airflow DAG
+default_args = {
+    'owner': 'airflow',
+    'depends_on_past': False,
+    'start_date': datetime(2025, 1, 1),
+    'retries': 1,
+}
+
+dag = DAG('ml_pipeline', default_args=default_args, schedule_interval='@daily')
+
+# Task 1: Extract data from an API
+def extract_data():
+    # Simulated API response
+    data = {'feature1': [1, 2, 3, 4], 'feature2': [2, 4, 6, 8], 'target': [5, 9, 13, 17]}
+    df = pd.DataFrame(data)
+    df.to_csv('/tmp/data.csv', index=False)
+
+extract_task = PythonOperator(
+    task_id='extract_data',
+    python_callable=extract_data,
+    dag=dag,
+)
+
+# Task 2: Preprocess the data
+def preprocess_data():
+    df = pd.read_csv('/tmp/data.csv')
+    df['feature_sum'] = df['feature1'] + df['feature2']
+    df.to_csv('/tmp/preprocessed_data.csv', index=False)
+
+preprocess_task = PythonOperator(
+    task_id='preprocess_data',
+    python_callable=preprocess_data,
+    dag=dag,
+)
+
+# Task 3: Train the model
+def train_model():
+    df = pd.read_csv('/tmp/preprocessed_data.csv')
+    X = df[['feature_sum']]
+    y = df['target']
+    model = LinearRegression()
+    model.fit(X, y)
+    joblib.dump(model, '/tmp/model.pkl')
+
+train_task = PythonOperator(
+    task_id='train_model',
+    python_callable=train_model,
+    dag=dag,
+)
+
+# Define task dependencies
+extract_task >> preprocess_task >> train_task
+
+from fastapi import FastAPI
+import joblib
+import pandas as pd
+
+app = FastAPI()
+
+# Load the trained model
+model = joblib.load('/tmp/model.pkl')
+
+@app.post("/predict/")
+def predict(data: dict):
+    # Example input: {"feature1": 3, "feature2": 6}
+    df = pd.DataFrame([data])
+    df['feature_sum'] = df['feature1'] + df['feature2']
+    prediction = model.predict(df[['feature_sum']])
+    return {"prediction": prediction[0]}
